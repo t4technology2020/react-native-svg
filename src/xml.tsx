@@ -122,8 +122,8 @@ export function SvgXml(props: XmlProps) {
   }
 }
 
-export async function fetchText(uri: string) {
-  const response = await fetch(uri);
+export async function fetchText(uri: string, signal: AbortSignal) {
+  const response = await fetch(uri, { signal });
   return await response.text();
 }
 
@@ -131,11 +131,20 @@ export function SvgUri(props: UriProps) {
   const { onError = err, uri } = props;
   const [xml, setXml] = useState<string | null>(null);
   useEffect(() => {
+    let controller = new AbortController();
     uri
-      ? fetchText(uri)
-          .then(setXml)
+      ? fetchText(uri, controller.signal)
+          .then(result => {
+            if (!controller.signal.aborted) {
+              setXml(result);
+            }
+          })
           .catch(onError)
       : setXml(null);
+
+    return () => {
+      controller.abort();
+    };
   }, [onError, uri]);
   return <SvgXml xml={xml} override={props} />;
 }
@@ -171,18 +180,32 @@ export class SvgFromXml extends Component<XmlProps, XmlState> {
 
 export class SvgFromUri extends Component<UriProps, UriState> {
   state = { xml: null };
+  controller: AbortController;
+  constructor(props: UriProps) {
+    super(props);
+
+    this.controller = new AbortController();
+  }
+
   componentDidMount() {
-    this.fetch(this.props.uri);
+    if (this.props.uri) {
+      this.controller = new AbortController();
+      this.fetch(this.props.uri, this.controller.signal);
+    }
   }
   componentDidUpdate(prevProps: { uri: string | null }) {
     const { uri } = this.props;
-    if (uri !== prevProps.uri) {
-      this.fetch(uri);
+    if (uri && uri !== prevProps.uri) {
+      this.controller = new AbortController();
+      this.fetch(uri, this.controller.signal);
     }
   }
-  async fetch(uri: string | null) {
+  async fetch(uri: string, signal: AbortSignal) {
     try {
-      this.setState({ xml: uri ? await fetchText(uri) : null });
+      const xml = await fetchText(uri, signal);
+      if (!signal.aborted) {
+        this.setState({ xml: xml || null });
+      }
     } catch (e) {
       console.error(e);
     }
